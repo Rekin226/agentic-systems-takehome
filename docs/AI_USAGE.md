@@ -53,12 +53,26 @@ resolve the item whenever a query is present, so the clarification is precise.
 This is the failure mode I watch for in generated code: not incorrect enough to
 fail a test, but incorrect enough to produce a confusing result for a user.
 
+A later pass turned up a similar case in the approval flow. When a human approves
+a hardware purchase the run finishes and its status becomes `COMPLETED`, but the
+decision it still carried read `NEED_HUMAN_APPROVAL`, with the reason "hardware
+purchases require human approval." Every test passed, because the tests checked
+the status and the tool trace, not the text of the decision. I only noticed by
+reading the demo output and seeing a completed run that still claimed it was
+waiting on a human. A downstream system reading that record would get two
+contradictory signals. The fix reconciles the decision at the moment of approval:
+the action becomes `CREATE_DRAFT_PO` and the approval requirement is cleared,
+while the original reason and the triggered policy rule are kept so the record
+still explains why the run was escalated in the first place. I pinned the new
+behavior with an assertion in the approval test so the same inconsistency cannot
+come back without a test failing.
+
 For the security-sensitive behavior I did not rely on the code appearing safe.
 The guarantee that `submit_to_erp` cannot run before approval is backed by a test
 that invokes it directly on an unapproved run and asserts two things: that it is
 refused, and that the refusal is recorded in the trace. A guardrail I cannot
 demonstrate with a test is one I do not consider reliable.
 
-This verification is captured in a 23-test suite. The value is not the count but
+This verification is captured in a 28-test suite. The value is not the count but
 that the guarantees are pinned down, so a later change that breaks one fails
 visibly rather than silently.

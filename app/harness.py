@@ -29,6 +29,7 @@ from app.planner import Planner, make_planner
 from app.schemas import (
     Action,
     AgentRunResponse,
+    Decision,
     DraftPO,
     RunRequest,
     RunStatus,
@@ -199,6 +200,23 @@ class AgentHarness:
                 "submit_to_erp",
                 {"run_id": run_id, "draft_po": state.draft_po.model_dump()},
             )
+
+        # Reconcile the decision with the new lifecycle state. Before approval the
+        # decision correctly read NEED_HUMAN_APPROVAL; leaving it that way on a
+        # COMPLETED run is internally inconsistent for a downstream reader. We
+        # record that the action proceeded, while preserving *why* approval was
+        # required (original reason + triggered_rules) so the audit trail is intact.
+        prior = state.decision
+        state.decision = Decision(
+            action=Action.CREATE_DRAFT_PO,
+            risk_level=prior.risk_level,
+            requires_human_approval=False,
+            reason=(
+                "Human approval granted; draft PO created and submitted to ERP. "
+                f"(Originally required approval: {prior.reason})"
+            ),
+            triggered_rules=prior.triggered_rules,
+        )
 
         state.status = RunStatus.COMPLETED
         self.store.save(state)

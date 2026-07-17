@@ -217,6 +217,13 @@ def test_approval_flow_reaches_erp_only_after_approve():
     assert r2.status.value == "COMPLETED"
     assert "submit_to_erp" in [t.tool for t in r2.tool_calls]
 
+    # After approval the decision must be reconciled with the COMPLETED status:
+    # it should no longer read NEED_HUMAN_APPROVAL, and it must preserve *why*
+    # approval was required (the original rule) for audit.
+    assert r2.decision.action == Action.CREATE_DRAFT_PO
+    assert r2.decision.requires_human_approval is False
+    assert "policy_002" in r2.decision.triggered_rules  # hardware rule, preserved
+
 
 # --------------------------------------------------------------------------- #
 # Planner switch (real-LLM <-> mock) + LLM output handling
