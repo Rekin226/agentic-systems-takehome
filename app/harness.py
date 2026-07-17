@@ -182,8 +182,14 @@ class AgentHarness:
         if state is None:
             raise KeyError(run_id)
         if state.decision is None or state.decision.action != Action.NEED_HUMAN_APPROVAL:
-            # Only runs actually awaiting approval can be approved.
-            raise ValueError(f"Run {run_id} is not awaiting approval.")
+            # Only runs actually awaiting approval can be approved. Report the
+            # run's current status so the caller sees why it was rejected and
+            # which runs are approvable, instead of a bare "not awaiting approval".
+            raise ValueError(
+                f"Run {run_id} is not awaiting approval (current status: "
+                f"{state.status.value}). Only a run with status "
+                f"AWAITING_APPROVAL can be approved."
+            )
 
         # A human has approved. Now high-risk tools become reachable.
         state.approved = True
