@@ -53,16 +53,15 @@ resolve the item whenever a query is present, so the clarification is precise.
 This is the failure mode I watch for in generated code: not incorrect enough to
 fail a test, but incorrect enough to produce a confusing result for a user.
 
-A later pass turned up a similar case in the approval flow. When a human approves
-a hardware purchase the run finishes and its status becomes `COMPLETED`, but the
-decision it still carried read `NEED_HUMAN_APPROVAL`, with the reason "hardware
-purchases require human approval." Every test passed, because the tests checked
-the status and the tool trace, not the text of the decision. I only noticed by
-reading the demo output and seeing a completed run that still claimed it was
-waiting on a human. A downstream system reading that record would get two
-contradictory signals. The fix reconciles the decision at the moment of approval:
-the action becomes `CREATE_DRAFT_PO` and the approval requirement is cleared,
-while the original reason and the triggered policy rule are kept so the record
+The same kind of problem showed up later in the approval flow. When a human
+approves a hardware purchase the run finishes and its status becomes `COMPLETED`,
+but the decision it still carried read `NEED_HUMAN_APPROVAL`, with the reason
+"hardware purchases require human approval." Every test passed, because the tests
+checked the status and the tool trace, not the text of the decision. I only
+noticed by reading the demo output and seeing a finished run that still described
+itself as waiting on a human. The fix reconciles the decision at the moment of
+approval. The action becomes `CREATE_DRAFT_PO`, the approval requirement is
+cleared, and the original reason and triggered policy rule are kept so the record
 still explains why the run was escalated in the first place. I pinned the new
 behavior with an assertion in the approval test so the same inconsistency cannot
 come back without a test failing.
