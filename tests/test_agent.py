@@ -23,6 +23,8 @@ from app.planner import (
     RuleBasedPlanner,
     _extract_json,
     _intent_from_json,
+    _is_transient_llm_error,
+    _with_retries,
     make_planner,
 )
 from app.schemas import (
@@ -263,3 +265,53 @@ def test_llm_injection_flag_is_or_ed_with_detector():
         department="engineering",
     )
     assert intent.injection_detected is True
+
+
+# --------------------------------------------------------------------------- #
+# LLM transient-error retry (guards the real 503 "queue full" we observed)
+# --------------------------------------------------------------------------- #
+
+class InternalServerError(Exception):
+    """Class name matches an openai transient type -> classified as transient."""
+
+
+class _FakeStatusError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"status {status_code}")
+        self.status_code = status_code
+
+
+def test_is_transient_llm_error_classification():
+    assert _is_transient_llm_error(InternalServerError()) is True        # by name
+    assert _is_transient_llm_error(_FakeStatusError(503)) is True        # by status
+    assert _is_transient_llm_error(_FakeStatusError(429)) is True
+    assert _is_transient_llm_error(_FakeStatusError(400)) is False       # permanent
+    assert _is_transient_llm_error(ValueError("boom")) is False
+
+
+def test_with_retries_recovers_after_transient_failures():
+    calls = {"n": 0}
+    slept: list[float] = []
+
+    def flaky() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise _FakeStatusError(503)  # transient twice, then succeed
+        return "ok"
+
+    out = _with_retries(flaky, attempts=3, base_delay=0.01, sleep=slept.append)
+    assert out == "ok"
+    assert calls["n"] == 3
+    assert len(slept) == 2  # backed off before the 2 retries
+
+
+def test_with_retries_does_not_retry_permanent_errors():
+    calls = {"n": 0}
+
+    def permanent() -> str:
+        calls["n"] += 1
+        raise _FakeStatusError(400)  # not transient -> raise immediately
+
+    with pytest.raises(_FakeStatusError):
+        _with_retries(permanent, attempts=3, base_delay=0.01, sleep=lambda _s: None)
+    assert calls["n"] == 1  # no retries

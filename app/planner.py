@@ -26,7 +26,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional, Protocol
+import time
+from typing import Callable, Optional, Protocol
 
 from app.fixtures import fixtures
 from app.schemas import ParsedIntent
@@ -190,6 +191,54 @@ def _intent_from_json(data: dict, message: str, department: str) -> ParsedIntent
     )
 
 
+# Transient upstream failures worth retrying (NVIDIA's shared endpoint returns
+# 503 "scheduler queue full" under load; timeouts and rate limits are transient too).
+_LLM_RETRY_ATTEMPTS = 3
+_LLM_RETRY_BASE_DELAY = 1.0  # seconds; grows 1s, 2s, ... between attempts
+_TRANSIENT_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+_TRANSIENT_NAMES = {
+    "APITimeoutError",
+    "APIConnectionError",
+    "InternalServerError",
+    "RateLimitError",
+}
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """True for hiccups worth retrying; False for permanent errors (401/400/...).
+
+    Classifies by HTTP status or exception class name so it needs no import of the
+    optional `openai` package (and stays unit-testable without a network call).
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in _TRANSIENT_STATUS:
+        return True
+    return type(exc).__name__ in _TRANSIENT_NAMES
+
+
+def _with_retries(
+    fn: Callable[[], str],
+    *,
+    attempts: int = _LLM_RETRY_ATTEMPTS,
+    base_delay: float = _LLM_RETRY_BASE_DELAY,
+    is_transient: Callable[[Exception], bool] = _is_transient_llm_error,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """Call fn(), retrying transient failures with exponential backoff.
+
+    A non-transient error, or the last attempt failing, re-raises immediately so
+    real problems (bad key, bad request) are not masked.
+    """
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            if i == attempts - 1 or not is_transient(exc):
+                raise
+            sleep(base_delay * (2 ** i))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 class LLMPlanner:
     """Extracts a ParsedIntent using a real LLM via NVIDIA NIM.
 
@@ -242,13 +291,19 @@ class LLMPlanner:
 
         # timeout so a slow/stuck upstream fails cleanly instead of hanging the run.
         client = OpenAI(api_key=self._api_key, base_url=self._base_url, timeout=30.0)
-        resp = client.chat.completions.create(
-            model=self.model,
-            max_tokens=400,
-            temperature=0,  # deterministic extraction, not creative writing
-            messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(message=message)}],
-        )
-        return resp.choices[0].message.content or ""
+
+        def _complete() -> str:
+            resp = client.chat.completions.create(
+                model=self.model,
+                max_tokens=400,
+                temperature=0,  # deterministic extraction, not creative writing
+                messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(message=message)}],
+            )
+            return resp.choices[0].message.content or ""
+
+        # NVIDIA's shared endpoint can return a transient 503 ("queue full") or
+        # time out; retry with backoff so a hiccup doesn't surface as a hard 500.
+        return _with_retries(_complete)
 
 
 # ---------------------------------------------------------------------------
