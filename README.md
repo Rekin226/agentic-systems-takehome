@@ -144,15 +144,18 @@ deterministic and needs no API key.
 AGENT_PLANNER=rule uvicorn app.main:app
 
 # real LLM (NVIDIA NIM, OpenAI-compatible): needs `pip install openai` + a key
-AGENT_PLANNER=llm LLM_MODEL=meta/llama-3.3-70b-instruct \
+AGENT_PLANNER=llm LLM_MODEL=meta/llama-3.1-8b-instruct \
   NVIDIA_API_KEY=nvapi-... uvicorn app.main:app
 ```
 
-Easier: copy `.env.example` to `.env`, fill in `NVIDIA_API_KEY`, and just run
-`uvicorn app.main:app` — the app auto-loads `.env` (via `python-dotenv`). The
-`LLMPlanner` drives NVIDIA's OpenAI-compatible endpoint with the `openai` SDK, so
-pointing it at any other OpenAI-compatible provider is just a different
-`NVIDIA_BASE_URL` + `LLM_MODEL`.
+The `8b` model is fast; swap in a larger one (e.g. `meta/llama-3.3-70b-instruct`)
+for higher extraction accuracy at the cost of latency.
+
+Easier: copy `.env.example` to `.env`, fill in `NVIDIA_API_KEY`, uncomment
+`AGENT_PLANNER=llm`, run `pip install openai`, then `uvicorn app.main:app` — the
+app auto-loads `.env` (via `python-dotenv`). The `LLMPlanner` drives NVIDIA's
+OpenAI-compatible endpoint with the `openai` SDK, so pointing it at any other
+OpenAI-compatible provider is just a different `NVIDIA_BASE_URL` + `LLM_MODEL`.
 
 Both planners return the same schema-validated `ParsedIntent`, so safety is
 identical: the gate still overrules whatever the planner proposes.
